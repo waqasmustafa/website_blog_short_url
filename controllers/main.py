@@ -22,22 +22,29 @@ class WebsiteBlogShortURL(WebsiteBlog):
         '/blog/page/<int:page>',
     ], type='http', auth="public", website=True, sitemap=True)
     def blogs(self, page=1, **post):
-        # Call the original method to let Odoo do its native filtering
+        # 1. Proactive approach: if exactly 1 blog exists, render it inline
+        try:
+            domain = request.website.website_domain()
+            blogs_list = request.env['blog.blog'].search(domain)
+            if len(blogs_list) == 1:
+                return self.blog(blog=blogs_list[0], page=page, **post)
+        except Exception:
+            pass
+
+        # 2. Reactive approach: let Odoo run, but intercept any redirect headers
         response = super().blogs(page=page, **post)
         
-        # If Odoo tries to auto-redirect to a single blog (e.g. /blog/our-blog-1)
-        if getattr(response, 'status_code', 200) in (301, 302, 303):
-            location = getattr(response, 'location', '')
-            if location.startswith('/blog/') and 'page/' not in location and 'tag/' not in location:
-                # We catch the redirect and extract the blog it wanted to go to
-                slug = location.split('/')[-1]
+        if hasattr(response, 'headers') and 'Location' in response.headers:
+            location = response.headers['Location']
+            # If Odoo tries to redirect to a specific blog URL
+            if '/blog/' in location and 'page/' not in location and 'tag/' not in location:
+                slug = location.rstrip('/').split('/')[-1]
                 try:
                     _, blog_id = request.env['ir.http']._unslug(slug)
                     if blog_id:
-                        blog = request.env['blog.blog'].browse(blog_id)
-                        if blog.exists():
-                            # Render the blog inline without changing the URL
-                            return self.blog(blog=blog, page=page, **post)
+                        blog_record = request.env['blog.blog'].browse(blog_id)
+                        if blog_record.exists():
+                            return self.blog(blog=blog_record, page=page, **post)
                 except Exception:
                     pass
                     

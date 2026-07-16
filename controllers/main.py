@@ -1,7 +1,18 @@
+import re
+import unicodedata
 from odoo import http
 from odoo.addons.website_blog.controllers.main import WebsiteBlog
-from odoo.addons.http_routing.models.ir_http import slugify
 from odoo.http import request
+
+
+def custom_slugify(s):
+    if not s:
+        return ''
+    s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('ascii')
+    s = s.lower()
+    s = re.sub(r'[^\w\s-]', '', s)
+    s = re.sub(r'[-\s]+', '-', s).strip('-')
+    return s
 
 
 class WebsiteBlogShortURL(WebsiteBlog):
@@ -34,7 +45,7 @@ class WebsiteBlogShortURL(WebsiteBlog):
     ):
         # Find the blog post by checking its slugified name instead of its ID
         all_posts = request.env['blog.post'].search([])
-        blog_post = all_posts.filtered(lambda p: slugify(p.name or '') == post_slug)
+        blog_post = all_posts.filtered(lambda p: custom_slugify(p.name) == post_slug)
         
         if not blog_post:
             # Fallback for old links that might still have the ID in them

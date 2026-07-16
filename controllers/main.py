@@ -22,11 +22,26 @@ class WebsiteBlogShortURL(WebsiteBlog):
         '/blog/page/<int:page>',
     ], type='http', auth="public", website=True, sitemap=True)
     def blogs(self, page=1, **post):
-        # Override to prevent redirect to /blog/our-blog-1 if there is only 1 blog
-        blogs = request.env['blog.blog'].search([('website_id', 'in', (False, request.website.id))])
-        if len(blogs) == 1:
-            return self.blog(blog=blogs[0], page=page, **post)
-        return super().blogs(page=page, **post)
+        # Call the original method to let Odoo do its native filtering
+        response = super().blogs(page=page, **post)
+        
+        # If Odoo tries to auto-redirect to a single blog (e.g. /blog/our-blog-1)
+        if getattr(response, 'status_code', 200) in (301, 302, 303):
+            location = getattr(response, 'location', '')
+            if location.startswith('/blog/') and 'page/' not in location and 'tag/' not in location:
+                # We catch the redirect and extract the blog it wanted to go to
+                slug = location.split('/')[-1]
+                try:
+                    _, blog_id = request.env['ir.http']._unslug(slug)
+                    if blog_id:
+                        blog = request.env['blog.blog'].browse(blog_id)
+                        if blog.exists():
+                            # Render the blog inline without changing the URL
+                            return self.blog(blog=blog, page=page, **post)
+                except Exception:
+                    pass
+                    
+        return response
 
     @http.route(
         ['/blog/<string:post_slug>'],

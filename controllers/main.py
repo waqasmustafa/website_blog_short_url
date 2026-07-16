@@ -22,33 +22,36 @@ class WebsiteBlogShortURL(WebsiteBlog):
         '/blog/page/<int:page>',
     ], type='http', auth="public", website=True, sitemap=True)
     def blogs(self, page=1, **post):
-        # 1. Proactive approach: if exactly 1 blog exists, render it inline
-        try:
-            domain = request.website.website_domain()
-            blogs_list = request.env['blog.blog'].search(domain)
-            if len(blogs_list) == 1:
-                return self.blog(blog=blogs_list[0], page=page, **post)
-        except Exception:
-            pass
-
-        # 2. Reactive approach: let Odoo run, but intercept any redirect headers
-        response = super().blogs(page=page, **post)
+        domain = request.website.website_domain()
+        blogs_list = request.env['blog.blog'].search(domain)
         
-        if hasattr(response, 'headers') and 'Location' in response.headers:
-            location = response.headers['Location']
-            # If Odoo tries to redirect to a specific blog URL
-            if '/blog/' in location and 'page/' not in location and 'tag/' not in location:
-                slug = location.rstrip('/').split('/')[-1]
-                try:
-                    _, blog_id = request.env['ir.http']._unslug(slug)
-                    if blog_id:
-                        blog_record = request.env['blog.blog'].browse(blog_id)
-                        if blog_record.exists():
-                            return self.blog(blog=blog_record, page=page, **post)
-                except Exception:
-                    pass
-                    
-        return response
+        if len(blogs_list) == 1:
+            # 100% FOOLPROOF WAY: We bypass all Odoo methods (which cause redirects) 
+            # and render the blog page template manually!
+            blog = blogs_list[0]
+            posts_domain = [('blog_id', '=', blog.id)]
+            post_count = request.env['blog.post'].search_count(posts_domain)
+            
+            pager = request.website.pager(
+                url='/blog',
+                total=post_count,
+                page=page,
+                step=12,
+            )
+            posts = request.env['blog.post'].search(posts_domain, limit=12, offset=pager['offset'])
+            
+            values = {
+                'blog': blog,
+                'main_object': blog,
+                'posts': posts,
+                'pager': pager,
+                'is_main_page': True,
+                'active_tag_ids': [],
+            }
+            return request.render("website_blog.blog_post_short", values)
+
+        # If there are 0 or >1 blogs, let Odoo handle it
+        return super().blogs(page=page, **post)
 
     @http.route(
         ['/blog/<string:post_slug>'],
@@ -65,12 +68,10 @@ class WebsiteBlogShortURL(WebsiteBlog):
         enable_editor=None,
         **post
     ):
-        # Find the blog post by checking its slugified name instead of its ID
         all_posts = request.env['blog.post'].search([])
         blog_post = all_posts.filtered(lambda p: custom_slugify(p.name) == post_slug)
         
         if not blog_post:
-            # Fallback for old links that might still have the ID in them
             try:
                 _, post_id = request.env['ir.http']._unslug(post_slug)
                 if post_id:
